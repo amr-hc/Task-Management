@@ -6,13 +6,21 @@ import protectedRoutes from './routes/protectedRoutes';
 import taskRoutes from './routes/taskRoutes';
 import taskCommentRoutes from './routes/taskCommentRoutes';
 import notificationRoutes from './routes/notificationRoutes';
-
-
+import rateLimit from 'express-rate-limit';
+import helmet from 'helmet';
 
 dotenv.config();
 
+const limiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  message: 'Too many requests from this IP, please try again later.',
+});
+
 const app = express();
 
+app.use(limiter);
+app.use(helmet());
 app.use(cors());
 app.use(express.json());
 

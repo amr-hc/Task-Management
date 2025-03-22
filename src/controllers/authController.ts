@@ -52,11 +52,42 @@ export const login = async (req: Request, res: Response): Promise<any> => {
   const { email, password } = parsed.data;
 
   const user = await User.findOne({ email });
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!user) return res.status(404).json({ error: 'Invalid credentials' });
 
   const valid = await bcrypt.compare(password, user.password);
   if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
   const tokens = generateTokens(user);
-  res.status(200).json({ user, ...tokens });
+  const { _id, name, role } = user;
+
+  res.status(200).json({
+    user: { _id, name, email, role },
+    ...tokens,
+  });
 };
+
+export const handleRefreshToken = async (req: Request, res: Response) : Promise<any> => {
+  const { refreshToken } = req.body;
+
+  if (!refreshToken) {
+    return res.status(401).json({ error: 'Refresh token is required' });
+  }
+
+  try {
+    const payload: any = jwt.verify(refreshToken, JWT_REFRESH_SECRET);
+    const user = await User.findById(payload.userId);
+
+    if (!user) return res.status(401).json({ error: 'User not found' });
+
+    const tokens = generateTokens(user);
+    const { _id, name, email, role } = user;
+
+    return res.status(200).json({
+      user: { _id, name, email, role },
+      ...tokens,
+    });
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid or expired refresh token' });
+  }
+};
+
