@@ -1,15 +1,14 @@
 import { Queue } from 'bullmq';
 import { createClient } from 'redis';
+const REDIS_URI = process.env.REDIS_URI!;
 
 export const redis = createClient({
-  url: 'redis://127.0.0.1:6379',
+  url: REDIS_URI,
 });
-
-redis.connect();
 
 export const notificationQueue = new Queue('notifications', {
   connection: {
-    host: '127.0.0.1',
-    port: 6379,
+    url: REDIS_URI,
   },
 });
+

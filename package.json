@@ -1,17 +1,16 @@
 {
   "name": "task-management",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "A task management backend built with Node.js, TypeScript, MongoDB, Redis, and BullMQ",
+  "main": "dist/server.js",
   "scripts": {
-  "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
-  "build": "tsc",
-  "start": "node dist/server.js"
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
   },
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "author": "Amr",
+  "license": "MIT",
   "dependencies": {
-    "-": "^0.0.1",
     "@types/bcrypt": "^5.0.2",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.1",

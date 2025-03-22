@@ -7,11 +7,6 @@ dotenv.config();
 
 mongoose.connect(process.env.MONGO_URI as string);
 
-const connection = {
-  host: '127.0.0.1',
-  port: 6379,
-};
-
 const worker = new Worker(
   'notifications',
   async (job) => {
@@ -25,7 +20,11 @@ const worker = new Worker(
       read: false,
     });
   },
-  { connection }
+  {
+    connection: {
+      url: process.env.REDIS_URI,
+    },
+  }
 );
 
 worker.on('completed', (job) => {
