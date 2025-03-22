@@ -4,6 +4,8 @@ import { Task, TaskStatus } from '../models/Task';
 import { AuthRequest } from '../middlewares/authMiddleware';
 import { TaskHistory } from '../models/TaskHistory';
 import { notificationQueue } from '../config/redis';
+import { redis } from '../config/redis';
+import { invalidateUserTaskCache } from '../utils/cache';
 
 
 export const createTask = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -23,43 +25,52 @@ export const createTask = async (req: AuthRequest, res: Response): Promise<void>
         dueDate,
         createdBy: req.user?.userId,
       });
-  
+      await invalidateUserTaskCache(assignedTo);
       res.status(201).json(task);
     } catch (err) {
       res.status(500).json({ error: 'Failed to create task', details: err });
     }
   };
   
-
-export const getUserTasks = async (req: AuthRequest, res: Response): Promise<void> => {
-  const { userId } = req.params;
-  const { status, dueBefore, dueAfter, page = '1', limit = '10' } = req.query;
-
-  const filters: any = {
-    assignedTo: userId,
+  export const getUserTasks = async (req: AuthRequest, res: Response): Promise<void> => {
+    const { userId } = req.params;
+    const { status, dueBefore, dueAfter, page = '1', limit = '10' } = req.query;
+  
+    const cacheKey = `tasks:${userId}:page=${page}&limit=${limit}&status=${status}&dueBefore=${dueBefore}&dueAfter=${dueAfter}`;
+  
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      res.status(200).json(JSON.parse(cached));
+      return;
+    }
+  
+    const filters: any = { assignedTo: userId };
+  
+    if (status && Object.values(TaskStatus).includes(status as TaskStatus)) {
+      filters.status = status;
+    }
+  
+    if (dueBefore) {
+      filters.dueDate = { ...filters.dueDate, $lte: new Date(dueBefore as string) };
+    }
+  
+    if (dueAfter) {
+      filters.dueDate = { ...filters.dueDate, $gte: new Date(dueAfter as string) };
+    }
+  
+    const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+  
+    const tasks = await Task.find(filters)
+      .sort({ dueDate: 1 })
+      .skip(skip)
+      .limit(parseInt(limit as string));
+  
+    await redis.set(cacheKey, JSON.stringify(tasks), {
+      EX: 600,
+    });
+  
+    res.status(200).json(tasks);
   };
-
-  if (status && Object.values(TaskStatus).includes(status as TaskStatus)) {
-    filters.status = status;
-  }
-
-  if (dueBefore) {
-    filters.dueDate = { ...filters.dueDate, $lte: new Date(dueBefore as string) };
-  }
-
-  if (dueAfter) {
-    filters.dueDate = { ...filters.dueDate, $gte: new Date(dueAfter as string) };
-  }
-
-  const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
-
-  const tasks = await Task.find(filters)
-    .sort({ dueDate: 1 })
-    .skip(skip)
-    .limit(parseInt(limit as string));
-
-  res.status(200).json(tasks);
-};
 
 export const getTaskById = async (req: AuthRequest, res: Response): Promise<void> => {
     const { id } = req.params;
@@ -128,7 +139,9 @@ export const getTaskById = async (req: AuthRequest, res: Response): Promise<void
           }
         }
       }
-  
+      if (updated?.assignedTo) {
+        await invalidateUserTaskCache(updated.assignedTo.toString());
+      }
       res.status(200).json(updated);
     } catch (err) {
       res.status(500).json({ error: 'Failed to update task', details: err });
@@ -145,6 +158,10 @@ export const getTaskById = async (req: AuthRequest, res: Response): Promise<void
       if (!deleted) {
         res.status(404).json({ error: 'Task not found' });
         return;
+      }
+
+      if (deleted.assignedTo) {
+        await invalidateUserTaskCache(deleted.assignedTo.toString());
       }
   
       res.status(200).json({ message: 'Task deleted successfully' });
