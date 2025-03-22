@@ -55,27 +55,6 @@ This document explains how to deploy the Task Management System to the cloud.
 - Uses `node:20-alpine` for lightweight image
 - Only production dependencies are included in the final image
 
-### `docker-compose.yml`
-
-```yaml
-version: "3.8"
-
-services:
-  api:
-    build: .
-    ports:
-      - "5000:5000"
-    env_file:
-      - .env
-    depends_on:
-      - redis
-
-  redis:
-    image: redis:6
-    ports:
-      - "6379:6379"
-```
-
 > 🧠 **Note**: MongoDB is hosted externally via Atlas, so it's not included in the Docker services.
 
 ---
