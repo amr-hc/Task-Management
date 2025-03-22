@@ -2,11 +2,13 @@ import { Router } from 'express';
 import { createTask } from '../controllers/taskController';
 import { authenticate } from '../middlewares/authMiddleware';
 import { getUserTasks, getTaskById, updateTask, deleteTask, getTaskHistory } from '../controllers/taskController';
+import { validate } from '../middlewares/validate';
+import { createTaskSchema } from '../validations/taskValidation';
 
 
 const router = Router();
 
-router.post('/', authenticate, createTask);
+router.post('/', authenticate,validate(createTaskSchema) , createTask);
 
 router.get('/user/:userId', authenticate, getUserTasks);
 

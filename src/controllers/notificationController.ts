@@ -1,22 +1,21 @@
-import { Response } from 'express';
+import { Response, NextFunction } from 'express';
 import { Notification } from '../models/Notification';
 import { AuthRequest } from '../middlewares/authMiddleware';
+import ApiError from '../utils/ApiError';
 
-export const getUserNotifications = async (req: AuthRequest, res: Response): Promise<void> => {
+export const getUserNotifications = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const notifications = await Notification.find({ userId: req.user?.userId })
-      .sort({ createdAt: -1 });
-
+    const notifications = await Notification.find({ userId: req.user?.userId }).sort({ createdAt: -1 });
     res.status(200).json(notifications);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to get notifications', details: err });
+    next(err);
   }
 };
 
-export const markNotificationAsRead = async (req: AuthRequest, res: Response): Promise<void> => {
-  const { id } = req.params;
-
+export const markNotificationAsRead = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
+    const { id } = req.params;
+
     const notification = await Notification.findOneAndUpdate(
       { _id: id, userId: req.user?.userId },
       { read: true },
@@ -24,12 +23,11 @@ export const markNotificationAsRead = async (req: AuthRequest, res: Response): P
     );
 
     if (!notification) {
-      res.status(404).json({ error: 'Notification not found' });
-      return;
+      throw new ApiError(404, 'Notification not found');
     }
 
     res.status(200).json(notification);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to update notification', details: err });
+    next(err);
   }
 };

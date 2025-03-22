@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const createTaskSchema = z.object({
   title: z.string().min(3),
   description: z.string().optional(),
-  assignedTo: z.string().min(24, 'Invalid user ID'),
+  assignedTo: z.string().min(24, 'Invalid user ID').optional(),
   dueDate: z.string().datetime().optional(),
 });
 

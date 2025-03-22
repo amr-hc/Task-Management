@@ -8,6 +8,7 @@ import taskCommentRoutes from './routes/taskCommentRoutes';
 import notificationRoutes from './routes/notificationRoutes';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
+import { errorHandler } from './middlewares/errorHandler';
 
 dotenv.config();
 
@@ -34,6 +35,6 @@ app.use('/api/tasks/comments', taskCommentRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/notifications', notificationRoutes);
 
-
+app.use(errorHandler as express.ErrorRequestHandler);
 
 export default app;

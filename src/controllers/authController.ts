@@ -1,9 +1,10 @@
-import { Request, Response } from 'express';
+import { NextFunction, Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { User } from '../models/User';
 import { registerSchema, loginSchema } from '../validations/authValidation';
 import dotenv from 'dotenv';
+import ApiError from '../utils/ApiError';
 dotenv.config();
 
 const JWT_SECRET = process.env.JWT_SECRET as string;
@@ -25,69 +26,72 @@ const generateTokens = (user: any) => {
   return { accessToken, refreshToken };
 };
 
-export const register = async (req: Request, res: Response) : Promise<any> => {
-  const parsed = registerSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.errors });
-  }
-
-  const { name, email, password } = parsed.data;
-
-  const existingUser = await User.findOne({ email });
-  if (existingUser) return res.status(400).json({ error: 'Email already in use' });
-
-  const hashed = await bcrypt.hash(password, 10);
-  const user = await User.create({ name, email, password: hashed });
-
-  const tokens = generateTokens(user);
-  res.status(201).json({ user, ...tokens });
-};
-
-export const login = async (req: Request, res: Response): Promise<any> => {
-  const parsed = loginSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.errors });
-  }
-
-  const { email, password } = parsed.data;
-
-  const user = await User.findOne({ email });
-  if (!user) return res.status(404).json({ error: 'Invalid credentials' });
-
-  const valid = await bcrypt.compare(password, user.password);
-  if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
-
-  const tokens = generateTokens(user);
-  const { _id, name, role } = user;
-
-  res.status(200).json({
-    user: { _id, name, email, role },
-    ...tokens,
-  });
-};
-
-export const handleRefreshToken = async (req: Request, res: Response) : Promise<any> => {
-  const { refreshToken } = req.body;
-
-  if (!refreshToken) {
-    return res.status(401).json({ error: 'Refresh token is required' });
-  }
-
+export const register = async ( req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const payload: any = jwt.verify(refreshToken, JWT_REFRESH_SECRET);
-    const user = await User.findById(payload.userId);
+    const { name, email, password } = req.body;
 
-    if (!user) return res.status(401).json({ error: 'User not found' });
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      throw new ApiError(400, 'Email already in use');
+    }
+
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await User.create({ name, email, password: hashed });
 
     const tokens = generateTokens(user);
-    const { _id, name, email, role } = user;
+    const { _id, role } = user;
 
-    return res.status(200).json({
+    res.status(201).json({
       user: { _id, name, email, role },
       ...tokens,
     });
   } catch (err) {
-    return res.status(401).json({ error: 'Invalid or expired refresh token' });
+    next(err);
   }
 };
+
+
+export const login = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { email, password } = req.body;
+
+    const user = await User.findOne({ email });
+    if (!user) throw new ApiError(401, 'Invalid credentials');
+
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) throw new ApiError(401, 'Invalid credentials');
+
+    const tokens = generateTokens(user);
+    const { _id, name, role } = user;
+
+    res.status(200).json({
+      user: { _id, name, email, role },
+      ...tokens,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const handleRefreshToken = async ( req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { refreshToken } = req.body;
+
+    const payload: any = jwt.verify(refreshToken, JWT_REFRESH_SECRET);
+    const user = await User.findById(payload.userId);
+
+    if (!user) throw new ApiError(401, 'User not found');
+
+    const tokens = generateTokens(user);
+    const { _id, name, email, role } = user;
+
+    res.status(200).json({
+      user: { _id, name, email, role },
+      ...tokens,
+    });
+  } catch (err) {
+    next(new ApiError(401, 'Invalid or expired refresh token'));
+  }
+};
+
 
