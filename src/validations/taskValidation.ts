@@ -1,0 +1,21 @@
+import { z } from 'zod';
+
+export const createTaskSchema = z.object({
+  title: z.string().min(3),
+  description: z.string().optional(),
+  assignedTo: z.string().min(24, 'Invalid user ID'),
+  dueDate: z.string().datetime().optional(),
+});
+
+export const updateTaskSchema = z.object({
+    title: z.string().min(3).optional(),
+    description: z.string().optional(),
+    status: z.enum(['todo', 'in_progress', 'done']).optional(),
+    dueDate: z.string().datetime().optional(),
+    assignedTo: z.string().min(24).optional(),
+  });
+
+export const commentSchema = z.object({
+comment: z.string().min(1),
+});
+  
