@@ -1,0 +1,55 @@
+name: Auto Deploy to EC2 with Docker
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Compress project
+        run: |
+          tar czf app.tar.gz . --exclude=node_modules --exclude=.git
+
+      - name: Upload project to server
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "app.tar.gz"
+          target: "/home/ec2-user"
+
+      - name: SSH and deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            sudo mkdir -p /var/www
+            sudo chown ec2-user:ec2-user /var/www
+
+            cd /var/www
+            rm -rf task-app
+            mkdir task-app
+            tar xzf ~/app.tar.gz -C task-app
+            rm ~/app.tar.gz
+
+            cd task-app
+
+            echo "Creating .env file..."
+            echo "PORT=5000" > .env
+            echo "REDIS_URI=redis://redis:6379" >> .env
+            echo "MONGO_URI=${{ secrets.MONGO_URI }}" >> .env
+            echo "JWT_SECRET=secret_key" >> .env
+            echo "JWT_REFRESH_SECRET=refresh_secret" >> .env
+
+            docker compose down
+            docker compose up -d --build
