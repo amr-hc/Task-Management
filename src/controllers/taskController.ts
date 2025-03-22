@@ -8,6 +8,7 @@ import { User } from '../models/User';
 import { UserTask } from '../models/UserTask';
 import mongoose, { PipelineStage } from 'mongoose';
 import { TaskHistory } from '../models/TaskHistory';
+import { TaskComment } from '../models/TaskComment';
 
 export const createTask = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   const session = await mongoose.startSession();
@@ -187,31 +188,37 @@ export const updateTask = async (req: Request, res: Response, next: NextFunction
 };
 
 export const deleteTask = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const { id } = req.params;
-    const task = await Task.findByIdAndDelete(id);
+
+    const task = await Task.findByIdAndDelete(id).session(session);
     if (!task) throw new ApiError(404, 'Task not found');
 
-    const userTasks = await UserTask.find({ taskId: id });
-    await UserTask.deleteMany({ taskId: id });
+    const userTasks = await UserTask.find({ taskId: id }).session(session);
+
+    await UserTask.deleteMany({ taskId: id }).session(session);
+    await TaskHistory.deleteMany({ taskId: id }).session(session);
+    await TaskComment.deleteMany({ taskId: id }).session(session);
+
+    await session.commitTransaction();
+    session.endSession();
 
     for (const userTask of userTasks) {
       const userId = userTask.userId.toString();
-      await notificationQueue.add('task_deleted', {
-        userId,
-        taskId: id,
-        message: 'Task has been deleted.',
-        type: 'task_deleted',
-      });
-
       await invalidateUserTaskCache(userId);
     }
 
     res.status(200).json({ message: 'Task deleted successfully' });
   } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
     next(err);
   }
 };
+
 
 export const getTaskHistory = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
