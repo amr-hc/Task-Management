@@ -29,15 +29,6 @@ Includes authentication, role-based access, task tracking, comments, notificatio
 
 ---
 
-## 🛠️ Setup
-
-### 1. Clone and install
-
-```bash
-git clone https://github.com/amr-hc/Task-Management.git
-cd task-management
-npm install
-
 # ☁️ Cloud Deployment Guide
 
 This document explains how to deploy the Task Management System to the cloud.
@@ -135,9 +126,4 @@ REDIS_URL=redis://redis:6379
 - Use Postman or curl to test endpoints.
 
 ---
-
-## 🧰 Optional Improvements
-
-- Add CI/CD with GitHub Actions
-- Use PM2 for process management
 
