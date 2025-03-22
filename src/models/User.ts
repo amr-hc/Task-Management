@@ -1,4 +1,4 @@
-import mongoose, { Document, Schema } from 'mongoose';
+import mongoose, { Document, ObjectId, Schema } from 'mongoose';
 
 export enum UserRole {
   ADMIN = 'admin',
@@ -7,6 +7,7 @@ export enum UserRole {
 }
 
 export interface IUser extends Document {
+  _id: ObjectId;
   name: string;
   email: string;
   password: string;

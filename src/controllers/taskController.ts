@@ -1,36 +1,47 @@
 import { Request, Response, NextFunction } from 'express';
-import { createTaskSchema, updateTaskSchema } from '../validations/taskValidation';
 import { Task, TaskStatus } from '../models/Task';
 import { AuthRequest } from '../middlewares/authMiddleware';
-import { TaskHistory } from '../models/TaskHistory';
 import { notificationQueue, redis } from '../config/redis';
 import { invalidateUserTaskCache } from '../utils/cache';
 import ApiError from '../utils/ApiError';
 import { User } from '../models/User';
+import { UserTask } from '../models/UserTask';
+import mongoose, { PipelineStage } from 'mongoose';
+import { TaskHistory } from '../models/TaskHistory';
 
-export const createTask = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+export const createTask = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
+    const { title, description, assignedTo = [], dueDate } = req.body;
+    const createdBy = (req as any).user?.userId;
 
-    const { title, description, assignedTo, dueDate } = req.body;
-
-    if (assignedTo) {
-      const user = await User.exists({ _id: assignedTo });
-      if (!user) {
-        throw new ApiError(404, 'Assigned user not found');
-      }
+    const existingUsersCount = await User.countDocuments({ _id: { $in: assignedTo } }).session(session);
+    if (existingUsersCount !== assignedTo.length) {
+      throw new ApiError(404, 'One or more users not found');
     }
 
-    const task = await Task.create({
-      title,
-      description,
-      assignedTo,
-      dueDate,
-      createdBy: req.user?.userId,
-    });
+    const task = await Task.create([{ title, description, dueDate, createdBy }], { session });
+    const taskId = task[0]._id;
 
-    await invalidateUserTaskCache(assignedTo);
-    res.status(201).json(task);
+    const userTaskDocs = assignedTo.map((userId: string) => ({ userId, taskId }));
+
+    if (userTaskDocs.length > 0) {
+      await UserTask.insertMany(userTaskDocs, { session });
+    }
+    
+    for (const userId of assignedTo) {
+      await invalidateUserTaskCache(userId);
+    }
+
+    await session.commitTransaction();
+    session.endSession();
+
+    res.status(201).json(task[0]);
   } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
     next(err);
   }
 };
@@ -40,30 +51,41 @@ export const getUserTasks = async (req: AuthRequest, res: Response, next: NextFu
     const { userId } = req.params;
     const { status, dueBefore, dueAfter, page = '1', limit = '10' } = req.query;
 
+    const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+    const limitNum = Math.min(parseInt(limit as string) || 10, 100);
     const cacheKey = `tasks:${userId}:page=${page}&limit=${limit}&status=${status}&dueBefore=${dueBefore}&dueAfter=${dueAfter}`;
 
     const cached = await redis.get(cacheKey);
     if (cached) {
       res.status(200).json(JSON.parse(cached));
       return;
-    }
+    } 
 
-    const filters: any = { assignedTo: userId };
+    const matchConditions = { userId: new mongoose.Types.ObjectId(userId) };
 
+    const taskMatch: any = {};
     if (status && Object.values(TaskStatus).includes(status as TaskStatus)) {
-      filters.status = status;
+      taskMatch['task.status'] = status;
+    }
+    if (dueBefore) {
+      taskMatch['task.dueDate'] = { ...taskMatch['task.dueDate'], $lte: new Date(dueBefore as string) };
+    }
+    if (dueAfter) {
+      taskMatch['task.dueDate'] = { ...taskMatch['task.dueDate'], $gte: new Date(dueAfter as string) };
     }
 
-    if (dueBefore) filters.dueDate = { ...filters.dueDate, $lte: new Date(dueBefore as string) };
-    if (dueAfter) filters.dueDate = { ...filters.dueDate, $gte: new Date(dueAfter as string) };
+    const pipeline: PipelineStage[] = [
+      { $match: matchConditions },
+      { $lookup: { from: 'tasks', localField: 'taskId', foreignField: '_id', as: 'task' } },
+      { $unwind: '$task' },
+      ...(Object.keys(taskMatch).length ? [{ $match: taskMatch }] : []),
+      { $sort: { 'task.dueDate': 1 } },
+      { $skip: skip },
+      { $limit: limitNum },
+      { $replaceRoot: { newRoot: '$task' } }
+    ];
 
-    const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
-
-    const tasks = await Task.find(filters)
-      .sort({ dueDate: 1 })
-      .skip(skip)
-      .limit(parseInt(limit as string));
-
+    const tasks = await UserTask.aggregate(pipeline);
     await redis.set(cacheKey, JSON.stringify(tasks), { EX: 600 });
     res.status(200).json(tasks);
   } catch (err) {
@@ -74,68 +96,92 @@ export const getUserTasks = async (req: AuthRequest, res: Response, next: NextFu
 export const getTaskById = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
-
-    const task = await Task.findById(id)
-      .populate('assignedTo', 'name email')
-      .populate('createdBy', 'name email');
-
+    const task = await Task.findById(id).populate('createdBy', 'name email');
     if (!task) throw new ApiError(404, 'Task not found');
 
-    res.status(200).json(task);
+    const userTasks = await UserTask.find({ taskId: id }).populate('userId', 'name email');
+    const assignees = userTasks.map(ut => ut.userId);
+
+    res.status(200).json({
+      ...task.toObject(),
+      assignees
+    });
   } catch (err) {
     next(err);
   }
 };
 
-export const updateTask = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+export const updateTask = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const { id } = req.params;
-    const parsed = updateTaskSchema.safeParse(req.body);
+    const { title, description, dueDate, status, assignedTo = [] } = req.body;
+    const userId = (req as any).user?.userId;
 
-    if (!parsed.success) {
-      throw new ApiError(400, 'Validation failed', parsed.error.errors);
+    const existingUsersCount = await User.countDocuments({ _id: { $in: assignedTo } }).session(session);
+    if (existingUsersCount !== assignedTo.length) {
+      throw new ApiError(404, 'One or more users not found');
     }
 
-    const existingTask = await Task.findById(id);
-    if (!existingTask) throw new ApiError(404, 'Task not found');
+    const oldTask = await Task.findOneAndUpdate(
+      { _id: id },
+      { $set: { title, description, dueDate, status } },
+      { new: false, session }
+    );
+    if (!oldTask) throw new ApiError(404, 'Task not found');
 
-    const updates = parsed.data;
-    const updated = await Task.findByIdAndUpdate(id, updates, { new: true });
-
-    const changedFields = Object.keys(updates);
-    for (const field of changedFields) {
-      const oldValue = (existingTask as any)[field];
-      const newValue = (updates as any)[field];
-      if (oldValue !== newValue) {
-        await TaskHistory.create({
-          taskId: id,
-          action: 'update',
-          field,
-          oldValue,
-          newValue,
-          changedBy: req.user?.userId,
-        });
-
-        if (field === 'status' || field === 'assignedTo') {
-          const targetUserId = field === 'assignedTo' ? updates.assignedTo : existingTask.assignedTo;
-          if (targetUserId) {
-            await notificationQueue.add('status_changed', {
-              userId: targetUserId.toString(),
-              taskId: id,
-              message: `Task ${field} has been updated.`,
-              type: 'status_changed',
-            });
-          }
-        }
+    const changes = [];
+    for (const field of ['title', 'description', 'dueDate', 'status']) {
+      const oldValue = (oldTask as any)[field];
+      const newValue = (req.body as any)[field];
+      if (newValue && oldValue?.toString() !== newValue?.toString()) {
+        changes.push({ field, oldValue, newValue });
       }
     }
 
-    if (updated?.assignedTo) {
-      await invalidateUserTaskCache(updated.assignedTo.toString());
+    if (changes.length > 0) {
+      await TaskHistory.create([{
+        taskId: id,
+        action: 'update',
+        changes,
+        changedBy: userId,
+      }], { session });
     }
 
-    res.status(200).json(updated);
+    const oldUserTasks = await UserTask.find({ taskId: id }).session(session);
+    const oldUserIds = oldUserTasks.map(ut => ut.userId.toString());
+
+    const removedUsers = oldUserIds.filter(uid => !assignedTo.includes(uid));
+    if (removedUsers.length > 0) {
+      await UserTask.deleteMany({ taskId: id, userId: { $in: removedUsers } }).session(session);
+    }
+
+    const newAssignees = assignedTo.filter((uid: string) => !oldUserIds.includes(uid));
+    const newUserTasks = newAssignees.map((uid: string) => ({ userId: uid, taskId: id }));
+    if (newUserTasks.length > 0) {
+      await UserTask.insertMany(newUserTasks, { session });
+
+      for (const uid of newAssignees) {
+        await notificationQueue.add('status_changed', {
+          userId: uid,
+          taskId: id,
+          message: 'Task was updated.',
+          type: 'status_changed',
+        });
+
+        await invalidateUserTaskCache(uid);
+      }
+    }
+
+    await session.commitTransaction();
+    session.endSession();
+
+    res.status(200).json({ message: 'Task updated successfully' });
   } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
     next(err);
   }
 };
@@ -143,12 +189,22 @@ export const updateTask = async (req: AuthRequest, res: Response, next: NextFunc
 export const deleteTask = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
+    const task = await Task.findByIdAndDelete(id);
+    if (!task) throw new ApiError(404, 'Task not found');
 
-    const deleted = await Task.findByIdAndDelete(id);
-    if (!deleted) throw new ApiError(404, 'Task not found');
+    const userTasks = await UserTask.find({ taskId: id });
+    await UserTask.deleteMany({ taskId: id });
 
-    if (deleted.assignedTo) {
-      await invalidateUserTaskCache(deleted.assignedTo.toString());
+    for (const userTask of userTasks) {
+      const userId = userTask.userId.toString();
+      await notificationQueue.add('task_deleted', {
+        userId,
+        taskId: id,
+        message: 'Task has been deleted.',
+        type: 'task_deleted',
+      });
+
+      await invalidateUserTaskCache(userId);
     }
 
     res.status(200).json({ message: 'Task deleted successfully' });
@@ -160,7 +216,6 @@ export const deleteTask = async (req: AuthRequest, res: Response, next: NextFunc
 export const getTaskHistory = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
-
     const history = await TaskHistory.find({ taskId: id })
       .sort({ createdAt: -1 })
       .populate('changedBy', 'name email');

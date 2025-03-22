@@ -1,4 +1,4 @@
-import mongoose, { Document, Schema } from 'mongoose';
+import mongoose, { Document, ObjectId, Schema } from 'mongoose';
 
 export enum TaskStatus {
   TODO = 'todo',
@@ -7,10 +7,10 @@ export enum TaskStatus {
 }
 
 export interface ITask extends Document {
+  _id: ObjectId;
   title: string;
   description?: string;
   status: TaskStatus;
-  assignedTo: mongoose.Types.ObjectId;
   dueDate?: Date;
   createdBy: mongoose.Types.ObjectId;
 }
@@ -25,11 +25,6 @@ const taskSchema = new Schema<ITask>(
       default: TaskStatus.TODO,
     },
     dueDate: { type: Date },
-    assignedTo: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: false,
-    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
@@ -38,5 +33,7 @@ const taskSchema = new Schema<ITask>(
   },
   { timestamps: true }
 );
+
+taskSchema.index({ assignedTo: 1, status: 1, dueDate: 1 });
 
 export const Task = mongoose.model<ITask>('Task', taskSchema);
