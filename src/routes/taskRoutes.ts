@@ -1,24 +1,23 @@
 import { Router } from 'express';
 import { createTask } from '../controllers/taskController';
-import { authenticate } from '../middlewares/authMiddleware';
 import { getUserTasks, getTaskById, updateTask, deleteTask, getTaskHistory } from '../controllers/taskController';
 import { validate } from '../middlewares/validate';
-import { createTaskSchema } from '../validations/taskValidation';
+import { createTaskSchema, updateTaskSchema } from '../validations/taskValidation';
+import { authorizeRoles } from '../middlewares/authMiddleware';
 
 
 const router = Router();
 
-router.post('/', authenticate,validate(createTaskSchema) , createTask);
+router.post('/', validate(createTaskSchema) , createTask);
 
-router.get('/user/:userId', authenticate, getUserTasks);
+router.get('/user/:userId', getUserTasks);
 
-router.get('/:id', authenticate, getTaskById);
+router.route('/:id')
+  .get(getTaskById)
+  .put(validate(updateTaskSchema), updateTask)
+  .delete(authorizeRoles('admin'), deleteTask);
 
-router.put('/:id', authenticate, updateTask);
-
-router.delete('/:id', authenticate, deleteTask);
-
-router.get('/:id/history', authenticate, getTaskHistory);
+router.get('/:id/history', getTaskHistory);
 
 
 export default router;
